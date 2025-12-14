@@ -1,4 +1,5 @@
 import localforage from 'localforage';
+import { WebDAVService } from './webdav-service';
 
 // Use native crypto.randomUUID() instead of uuid package
 const generateId = (): string => {
@@ -22,6 +23,7 @@ const MAIN_BOARD_CONTENT_KEY = 'main_board_content'; // Old key for migration
 
 export class FileManager {
     private static instance: FileManager;
+    private webdavService: WebDAVService;
 
     private constructor() {
         localforage.config({
@@ -29,6 +31,7 @@ export class FileManager {
             storeName: 'drawnix_store',
             driver: [localforage.INDEXEDDB, localforage.LOCALSTORAGE],
         });
+        this.webdavService = new WebDAVService();
     }
 
     public static getInstance(): FileManager {
@@ -94,6 +97,10 @@ export class FileManager {
         boards = boards.filter(b => b.id !== id);
         await this.saveBoardsMetadata(boards);
         await localforage.removeItem(`board_content_${id}`);
+        // Also delete from WebDAV
+        this.webdavService.deleteBoard(id).catch(err => {
+            // Error already logged in webdav-service
+        });
     }
 
     async renameBoard(id: string, newName: string): Promise<void> {
@@ -111,5 +118,9 @@ export class FileManager {
 
     async saveBoard(id: string, content: BoardData): Promise<void> {
         await localforage.setItem(`board_content_${id}`, content);
+        // Backup to WebDAV asynchronously (non-blocking)
+        this.webdavService.backupBoard(id, content).catch(err => {
+            // Error already logged in webdav-service, this is just a safety catch
+        });
     }
 }

@@ -30,6 +30,7 @@
     "laser-pen": "^1.0.1",
     "localforage": "^1.10.0",
     "lodash": "^4.17.21",
+    "webdav": "^5.7.1",
     "mobile-detect": "^1.4.5",
     "open-color": "^1.9.1",
     "react": "19.2.0",
