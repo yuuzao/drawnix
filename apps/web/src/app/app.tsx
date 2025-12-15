@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Drawnix } from '@drawnix/drawnix';
 import { PlaitBoard, PlaitElement, PlaitTheme, Viewport } from '@plait/core';
 import { FileManager, BoardMetadata, BoardData } from './file-manager';
@@ -20,6 +20,20 @@ export function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Use refs to avoid stale closure issues
+  const activeBoardIdRef = useRef<string>('');
+  const isSwitchingRef = useRef<boolean>(false);
+  const valueRef = useRef<AppValue>({ children: [] });
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    activeBoardIdRef.current = activeBoardId;
+  }, [activeBoardId]);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
   // Initialize FileManager and load boards
   useEffect(() => {
     const init = async () => {
@@ -30,9 +44,12 @@ export function App() {
         // Load the most recent board
         const sortedBoards = [...loadedBoards].sort((a, b) => b.createdAt - a.createdAt);
         const firstBoardId = sortedBoards[0].id;
+        // Set ref first before state to avoid race condition
+        activeBoardIdRef.current = firstBoardId;
         setActiveBoardId(firstBoardId);
         const boardData = await fileManager.loadBoard(firstBoardId);
         if (boardData) {
+          valueRef.current = boardData as AppValue;
           setValue(boardData as AppValue);
           if (boardData.children && boardData.children.length === 0) {
             setTutorial(true);
@@ -48,61 +65,107 @@ export function App() {
 
   // Handle board selection
   const handleSelectBoard = useCallback(async (id: string) => {
-    if (id === activeBoardId) return;
+    if (id === activeBoardIdRef.current) return;
+    if (isSwitchingRef.current) return; // Prevent concurrent switches
 
-    // Save current board before switching
-    if (activeBoardId) {
-      await fileManager.saveBoard(activeBoardId, value as BoardData);
-    }
+    isSwitchingRef.current = true;
 
-    setActiveBoardId(id);
-    const boardData = await fileManager.loadBoard(id);
-    if (boardData) {
-      setValue(boardData as AppValue);
-      setTutorial(boardData.children && boardData.children.length === 0);
-    } else {
-      setValue({ children: [] });
-      setTutorial(true);
+    try {
+      // Save current board before switching (use refs to get latest values)
+      const currentBoardId = activeBoardIdRef.current;
+      if (currentBoardId) {
+        await fileManager.saveBoard(currentBoardId, valueRef.current as BoardData);
+      }
+
+      // Load new board data BEFORE updating any state
+      const boardData = await fileManager.loadBoard(id);
+
+      // Now atomically update both ref and state
+      activeBoardIdRef.current = id;
+      setActiveBoardId(id);
+
+      if (boardData) {
+        valueRef.current = boardData as AppValue;
+        setValue(boardData as AppValue);
+        setTutorial(boardData.children && boardData.children.length === 0);
+      } else {
+        valueRef.current = { children: [] };
+        setValue({ children: [] });
+        setTutorial(true);
+      }
+    } finally {
+      isSwitchingRef.current = false;
     }
-  }, [activeBoardId, value]);
+  }, []);
 
   // Handle create new board
   const handleCreateBoard = useCallback(async () => {
-    // Save current board before creating new one
-    if (activeBoardId) {
-      await fileManager.saveBoard(activeBoardId, value as BoardData);
-    }
+    if (isSwitchingRef.current) return;
 
-    const newId = await fileManager.createBoard(`Board ${boards.length + 1}`);
-    const updatedBoards = await fileManager.getBoards();
-    setBoards(updatedBoards);
-    setActiveBoardId(newId);
-    setValue({ children: [] });
-    setTutorial(true);
-  }, [activeBoardId, value, boards.length]);
+    isSwitchingRef.current = true;
+
+    try {
+      // Save current board before creating new one (use refs)
+      const currentBoardId = activeBoardIdRef.current;
+      if (currentBoardId) {
+        await fileManager.saveBoard(currentBoardId, valueRef.current as BoardData);
+      }
+
+      const currentBoards = await fileManager.getBoards();
+      const newId = await fileManager.createBoard(`Board ${currentBoards.length + 1}`);
+      const updatedBoards = await fileManager.getBoards();
+      setBoards(updatedBoards);
+
+      // Update refs and state atomically
+      activeBoardIdRef.current = newId;
+      setActiveBoardId(newId);
+      valueRef.current = { children: [] };
+      setValue({ children: [] });
+      setTutorial(true);
+    } finally {
+      isSwitchingRef.current = false;
+    }
+  }, []);
 
   // Handle delete board
   const handleDeleteBoard = useCallback(async (id: string) => {
-    if (boards.length <= 1) {
+    const currentBoards = await fileManager.getBoards();
+    if (currentBoards.length <= 1) {
       alert('Cannot delete the last board');
       return;
     }
 
-    await fileManager.deleteBoard(id);
-    const updatedBoards = await fileManager.getBoards();
-    setBoards(updatedBoards);
+    if (isSwitchingRef.current) return;
+    isSwitchingRef.current = true;
 
-    // If we deleted the active board, switch to another one
-    if (id === activeBoardId && updatedBoards.length > 0) {
-      const newActiveId = updatedBoards[0].id;
-      setActiveBoardId(newActiveId);
-      const boardData = await fileManager.loadBoard(newActiveId);
-      if (boardData) {
-        setValue(boardData as AppValue);
-        setTutorial(boardData.children && boardData.children.length === 0);
+    try {
+      await fileManager.deleteBoard(id);
+      const updatedBoards = await fileManager.getBoards();
+      setBoards(updatedBoards);
+
+      // If we deleted the active board, switch to another one
+      if (id === activeBoardIdRef.current && updatedBoards.length > 0) {
+        const newActiveId = updatedBoards[0].id;
+        const boardData = await fileManager.loadBoard(newActiveId);
+
+        // Update refs and state atomically
+        activeBoardIdRef.current = newActiveId;
+        setActiveBoardId(newActiveId);
+
+        if (boardData) {
+          valueRef.current = boardData as AppValue;
+          setValue(boardData as AppValue);
+          setTutorial(boardData.children && boardData.children.length === 0);
+        } else {
+          valueRef.current = { children: [] };
+          setValue({ children: [] });
+          setTutorial(true);
+        }
       }
+    } finally {
+      isSwitchingRef.current = false;
     }
-  }, [activeBoardId, boards.length]);
+  }, []);
 
   // Handle rename board
   const handleRenameBoard = useCallback(async (id: string, newName: string) => {
@@ -111,17 +174,27 @@ export function App() {
     setBoards(updatedBoards);
   }, []);
 
-  // Real-time save on change
+  // Real-time save on change - use refs to avoid stale closure issues
   const handleChange = useCallback((newValue: unknown) => {
-    const typedValue = newValue as AppValue;
-    setValue(typedValue);
-    if (activeBoardId) {
-      fileManager.saveBoard(activeBoardId, typedValue as BoardData);
+    // Don't save during board switching to prevent data corruption
+    if (isSwitchingRef.current) {
+      return;
     }
+
+    const typedValue = newValue as AppValue;
+    valueRef.current = typedValue;
+    setValue(typedValue);
+
+    // Use ref to get the current board ID (not the stale closure value)
+    const currentBoardId = activeBoardIdRef.current;
+    if (currentBoardId) {
+      fileManager.saveBoard(currentBoardId, typedValue as BoardData);
+    }
+
     if (typedValue.children && typedValue.children.length > 0) {
       setTutorial(false);
     }
-  }, [activeBoardId]);
+  }, []); // Empty dependency array - we use refs instead
 
   if (isLoading) {
     return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>Loading...</div>;
