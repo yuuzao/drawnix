@@ -6,17 +6,10 @@ services:
     container_name: drawnix
     restart: always
     networks:
-      - traefik-proxy
-    labels:
-      - traefik.enable=true
-      - traefik.http.routers.drawnix.rule=Host(`mindmap.pika.run`)
-      - traefik.http.routers.drawnix.entrypoints=websecure
-      - traefik.http.routers.drawnix.tls.certresolver=myresolver
-      - traefik.http.services.drawnix.loadbalancer.server.port=80
+      - app-default
     environment:
       - VITE_WEBDAV_URL=https://file.qwila.xyz/backup/
 
 networks:
-  traefik-proxy:
+  app-default:
     external: true
-
