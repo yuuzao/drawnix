@@ -24,6 +24,26 @@ export function App() {
   const activeBoardIdRef = useRef<string>('');
   const isSwitchingRef = useRef<boolean>(false);
   const valueRef = useRef<AppValue>({ children: [] });
+  const boardRef = useRef<PlaitBoard | null>(null);
+  const switchUnlockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const lockSwitch = () => {
+    if (switchUnlockTimerRef.current) {
+      clearTimeout(switchUnlockTimerRef.current);
+      switchUnlockTimerRef.current = null;
+    }
+    isSwitchingRef.current = true;
+  };
+
+  const unlockSwitch = () => {
+    if (switchUnlockTimerRef.current) {
+      clearTimeout(switchUnlockTimerRef.current);
+    }
+    switchUnlockTimerRef.current = setTimeout(() => {
+      isSwitchingRef.current = false;
+      switchUnlockTimerRef.current = null;
+    }, 0);
+  };
 
   // Keep refs in sync with state
   useEffect(() => {
@@ -33,6 +53,14 @@ export function App() {
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
+
+  useEffect(() => {
+    return () => {
+      if (switchUnlockTimerRef.current) {
+        clearTimeout(switchUnlockTimerRef.current);
+      }
+    };
+  }, []);
 
   // Initialize FileManager and load boards
   useEffect(() => {
@@ -63,18 +91,30 @@ export function App() {
     init();
   }, []);
 
+  const getCurrentBoardData = (): BoardData => {
+    const board = boardRef.current;
+    if (board) {
+      return {
+        children: board.children as unknown as BoardData['children'],
+        viewport: board.viewport,
+        theme: board.theme,
+      };
+    }
+    return valueRef.current as BoardData;
+  };
+
   // Handle board selection
   const handleSelectBoard = useCallback(async (id: string) => {
     if (id === activeBoardIdRef.current) return;
     if (isSwitchingRef.current) return; // Prevent concurrent switches
 
-    isSwitchingRef.current = true;
+    lockSwitch();
 
     try {
       // Save current board before switching (use refs to get latest values)
       const currentBoardId = activeBoardIdRef.current;
       if (currentBoardId) {
-        await fileManager.saveBoard(currentBoardId, valueRef.current as BoardData);
+        await fileManager.saveBoard(currentBoardId, getCurrentBoardData());
       }
 
       // Load new board data BEFORE updating any state
@@ -94,7 +134,7 @@ export function App() {
         setTutorial(true);
       }
     } finally {
-      isSwitchingRef.current = false;
+      unlockSwitch();
     }
   }, []);
 
@@ -102,13 +142,13 @@ export function App() {
   const handleCreateBoard = useCallback(async () => {
     if (isSwitchingRef.current) return;
 
-    isSwitchingRef.current = true;
+    lockSwitch();
 
     try {
       // Save current board before creating new one (use refs)
       const currentBoardId = activeBoardIdRef.current;
       if (currentBoardId) {
-        await fileManager.saveBoard(currentBoardId, valueRef.current as BoardData);
+        await fileManager.saveBoard(currentBoardId, getCurrentBoardData());
       }
 
       const currentBoards = await fileManager.getBoards();
@@ -123,7 +163,7 @@ export function App() {
       setValue({ children: [] });
       setTutorial(true);
     } finally {
-      isSwitchingRef.current = false;
+      unlockSwitch();
     }
   }, []);
 
@@ -136,7 +176,7 @@ export function App() {
     }
 
     if (isSwitchingRef.current) return;
-    isSwitchingRef.current = true;
+    lockSwitch();
 
     try {
       await fileManager.deleteBoard(id);
@@ -163,7 +203,7 @@ export function App() {
         }
       }
     } finally {
-      isSwitchingRef.current = false;
+      unlockSwitch();
     }
   }, []);
 
@@ -243,13 +283,14 @@ export function App() {
       {/* Main content */}
       <div style={{ flex: 1, marginLeft: sidebarOpen ? 250 : 0, transition: 'margin-left 0.3s' }}>
         <Drawnix
+          key={activeBoardId}
           value={value.children}
           viewport={value.viewport}
           theme={value.theme}
           onChange={handleChange}
           tutorial={tutorial}
           afterInit={(board: PlaitBoard) => {
-            console.log('board initialized');
+            boardRef.current = board;
           }}
         ></Drawnix>
       </div>
